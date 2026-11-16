@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen bg-slate-50">
+    <header class="border-b border-slate-200 bg-white">
+      <div class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 class="text-lg font-semibold text-slate-900">GESTEL Dashboard</h1>
+          <p class="text-sm text-slate-500">Your account details are shown below.</p>
+        </div>
+
+        <nav class="flex flex-wrap items-center gap-2">
+          <a
+            href="/dashboard"
+            class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >Dashboard</a
+          >
+          <a
+            href="/docs"
+            class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >API docs</a
+          >
+          <a
+            href="/logout"
+            class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >Log out</a
+          >
+        </nav>
+      </div>
+    </header>
+<main class="mx-auto max-w-5xl px-4 py-10">
+      <section class="rounded-2xl bg-white p-8 shadow">
+        <div class="flex flex-wrap items-start justify-between gap-4 sm:items-center">
+          <div>
+            <h2 class="text-xl font-semibold text-slate-900">Welcome, {{ user.name }}!</h2>
+            <p class="mt-2 text-sm text-slate-600">
+              You are authenticated as <span class="font-medium text-slate-800">{{ user.email }}</span>.
+            </p>
+          </div>
+
+        </div>
+
+        {% if users_preview %}
+        <div class="mt-6">
+          <h3 class="text-lg font-semibold text-slate-900">All users (preview)</h3>
+          <p class="mt-1 text-sm text-slate-600">Showing the first {{ users_preview|length }} users.</p>
+          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="px-4 py-3">ID</th>
+                  <th class="px-4 py-3">Name</th>
+                  <th class="px-4 py-3">Email</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-200 bg-white">
+                {% for u in users_preview %}
+                <tr>
+                  <td class="px-4 py-3">{{ u.id }}</td>
+                  <td class="px-4 py-3">{{ u.name }}</td>
+                  <td class="px-4 py-3">{{ u.email }}</td>
+                </tr>
+{% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="mt-6 grid gap-4 sm:grid-cols-2">
+          <div class="rounded-xl border border-slate-200 p-5">
+            <h3 class="text-sm font-semibold text-slate-900">Quick start</h3>
+            <p class="mt-2 text-sm text-slate-600">
+              Browse the API endpoints or add more pages to your app.
+            </p>
+            <a
+              class="mt-4 inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+              href="/docs"
+              >API docs</a
+            >
+          </div>
+          <div class="rounded-xl border border-slate-200 p-5">
+            <h3 class="text-sm font-semibold text-slate-900">Get started</h3>
+            <p class="mt-2 text-sm text-slate-600">
+              Modify <code class="rounded bg-slate-100 px-1 py-0.5 text-xs">app/main.py</code> and
+              refresh to see live updates.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

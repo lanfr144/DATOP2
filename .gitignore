@@ -1,0 +1,21 @@
+# ===== DATOP2 / EXERCISES =====
+# Secrets : les fichiers .env ne doivent JAMAIS etre commites.
+# Chaque projet fournit un .env.example (memes cles, mots de passe = PASSWORD_<NOM>).
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# Bases locales / fichiers de test
+*.db
+*.sqlite3
+
+# Fichiers temporaires Office / Word
+~$*
+*.wbk

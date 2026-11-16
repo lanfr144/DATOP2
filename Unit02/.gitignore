@@ -1,0 +1,15 @@
+# secrets : ne jamais committer les .env (les modeles sont les .env.example)
+.env
+.env.*
+!.env.example
+
+# Python / environnements virtuels
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# bases locales
+*.sqlite3
+*.db

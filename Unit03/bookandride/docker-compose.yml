@@ -1,0 +1,35 @@
+# Book&Ride - monolith (Unit 03): 2 containers, 1 database.
+# Every port and password comes from .env  (cp .env.example .env)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      PGPORT: ${DB_PORT}          # port PostgreSQL inside the Docker network (also read by pg_isready)
+    volumes:
+      - dbdata:/var/lib/postgresql/data      # data survives "docker compose down"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # no "ports:": the database is NOT reachable from outside Docker
+
+  api:
+    build: ./api
+    env_file: .env
+    environment:
+      API_PORT: ${API_PORT}                 # port uvicorn listens on inside the container
+      # inside the Compose network, the API reaches PostgreSQL by its service name "db"
+      DATABASE_URL: postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+    ports:
+      - "${API_HOST_PORT}:${API_PORT}"      # http://localhost:${API_HOST_PORT}
+    depends_on:
+      db:
+        condition: service_healthy          # start the API only once PostgreSQL is ready
+    # healthcheck: defined in api/Dockerfile (HEALTHCHECK) -> "docker compose up --wait" waits for it
+
+volumes:
+  dbdata:

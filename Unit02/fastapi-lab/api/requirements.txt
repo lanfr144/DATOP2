@@ -1,0 +1,8 @@
+# Correction : l'ancien fichier etait un "pip freeze" complet de fastapi[all]
+# (sentry, opentelemetry, fastapi-cloud-cli...). On ne garde que le necessaire.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-dotenv>=1.0
+# tests
+pytest>=8.0
+httpx>=0.27

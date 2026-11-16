@@ -1,0 +1,12 @@
+# Prometheus scrape configuration (optional, Checkpoint 4).
+# RENTALS_TARGET is replaced at start-up by "rentals:${RENTALS_PORT}" (see docker-compose.yml),
+# because Prometheus cannot read environment variables in its config file.
+# Correction: the old prometheus.yml contained a copy of test_rentals_api.py (Python code).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: rentals
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["RENTALS_TARGET"]

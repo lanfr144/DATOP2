@@ -1,0 +1,688 @@
+--- PAGE 1 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+Lab 2: FastAPI with POST, Validation & Testing
+
+€ DURATION (al) LEVEL ES PREREQUISITES @ YOU WILL PRODUCE
+= 90 minutes Intermediate Lab 1 completed, venv An items API with
+working validation + automated
+tests
+
+At the end of this lab, you will be able to:
+* Describe request bodies with Pydantic models and validation rules (Field).
+° Create resources with POST and return the right status codes (201, 404, 422).
+° Use query parameters, a dependency (Depends) and a background task.
+
+* Test an API from the terminal with curl and automatically with pytest.
+
+Finish Lab 1 and keep your project folder (e.g., fastapi-lab). Activate your venv, then install the extra
+packages:
+
+> TERMINAL
+
+pip install fastapi uvicorn pydantic httpx pytest pytest-asyncio
+
+pydantic Data validation (already installed with FastAPI, listed here for clarity).
+httpx An HTTP client used by the tests to call the API.
+
+pytest The standard Python testing framework.
+
+pytest-asyncio Lets pytest run async test functions (needed by @pytest.mark. asyncio).
+
+LEAMI Page 1 of 10
+
+CENOUECCANVAICAIOUCVUNIVIANUVIOENVCALCHUACHUSNOUVNICUCOAID
+
+--- PAGE 2 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+| 1) Create models and endpoints
+
+Before writing code, look at what happens to a POST /items request. Every numbered box corresponds to
+a part of the code below:
+
+LIFE OF A POST litems REQUEST
+
+© Client @ create item() 3 response model
+curl, Swagger UI or a test ydantic d ody Yı ans: builds a s the
+sends JSON in the body: a E : tyl n Out new id e ItemOut and
+{"name": "Running Shoes", LI ppends it to DB. se reated.
+"price": 89.9, ...]
+
+1
+1
+| invalid 1 |
+BEE dE
+H s
+1 1
+422 Unprocessable Entity 1 @ Background task ; 201 Created
+Your function never runs, | Runs AFTER the response: 1 {"id": 1, "name": "Running
+The error lists each bad field. | [bg] Item created: 1 1 Shoes", "price": 89.9, ...}
+x
+
+Tip: the red path (422) and the green path (201) are exactly what you will test in section 4.
+
+Figure 6 — Life of a POST /items request
+
+Create main.py (or replace the content of your Lab 1 file). The code is shown in three parts so that we can
+explain each one, but all three parts go into the same file, in this order.
+
+B MAIN.PY - PART 1 OF 3 - MODELS
+
+from typing import Optional, List
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, status
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="FastAPI Lab 2")
+
+HB oo=== Pydantic models -----
+class ItemIn(BaseModel) :
+name: str = Field(..., min_length=2, max_length=64)
+price: float = Field(..., ge=®)
+tags: List[str] = Field(default_factory=list)
+rating: Optional[float] = Field(None, ge-0, le=5)
+# old (v1 style):
+# sizes: Optional[conlist(int, min_items=1, max_items=5)] = None
+# new (v2 style):
+sizes: Optional[List[int]] = Field(default=None, min_length=1, max_length=5)
+
+class ItemOut(ItemIn):
+id: int
+
+Reading the models: ItemIn describes what the client sends. ItemOut inherits all its fields and adds an
+id: it describes what the API returns.
+
+Field(...) The ... (Ellipsis) means required. name missing
+
+min_length=2,
+
+max length-64 Length limits for strings (and lists). A" (too short)
+
+LEAMI Page 2 of 10
+
+CELILIECALIUnzcnz.icuriuon.iuluo»rriucaciac.iar.iir-zcLcLnm--
+
+--- PAGE 3 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+CC CE CT
+ge=0 / le=5 greater or equal / less or equal. price: -1, rating: 6
+default_factory=list Creates a new empty list for each item. =
+
+Optional[...] = None The field may be omitted; it will be null. —
+
+B MAIN.PY - PART 2 OF 3 - STORAGE, DEPENDENCY, BACKGROUND TASK
+
+# ----- In-memory DB (for demo) -----
+DB: List[ItemOut] = []
+
+HB oo=== Dependency example -----
+
+def pagination(
+limit: int = Query(10, ge=1, le=100),
+offset: int = Query(0, ge-0),
+
+return ("limit": limit, "offset": offset)
+
+HB oo=== Background task -----
+
+def log creation(item id: int):
+# pretend to write to a log/queue
+print(f"[bg] Item created: (item id)")
+
+* DB is a simple Python list. It lives in memory, so it is emptied every time the server restarts
+(including with - - re1oad!). A real project would use a database (SQLite, PostgreSQL, MongoDB...).
+
+* pagination is a dependency: a reusable function whose parameters (limit, offset) are read from
+the query string and validated. Any route can use it with Depends(pagination).
+
+* log creation will run as a background task: after the response has been sent, so the client does
+not wait for it.
+
+B MAIN.PY - PART 3 OF 3 - ROUTES
+
+# ----- Routes -----
+@app.get("/", tags-["health"])
+def root():
+
+return {"ok": True}
+
+Rapp post (
+"/items",
+response model-ItemOut,
+status code-status.HTTP 201 CREATED,
+tags-["items"],
+
+def create item(payload: ItemIn, bg: BackgroundTasks):
+item id = len(DB) + 1
+item - ItemOut(id-item id, **payload.model dump())
+DB.append(item)
+bg.add task(log creation, item id)
+return item
+
+@app.get("/items/{item_id}", response model-ItemOut, tags-["items"])
+def get item(item id: int):
+for it in DB:
+if it.id -- item id:
+
+LEAMI Page 3 of 10
+
+CELILIECALIUnzcnz.icuriuon.iuluo»rriucaciac.iar.iir-zcLcLnm--
+
+--- PAGE 4 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+return it
+raise HTTPException(status code=404, detail="Item not found”)
+
+@app.get("/items", response model-List[ItemOut], tags-["items"])
+def list items(p: dict - Depends(pagination), tag: Optional[str] - None):
+items - DB
+if tag:
+items - [i for i in items if tag in i.tags]
+start, end = p["offset"], p["offset"] + p["limit"]
+return items[start:end]
+
+A parameter typed with a Pydantic model is
+
+R t bod ayload: ItemIn
+equest Body pay read from the JSON body and validated.
+Filt d d ts th tput: only th
+Response model response model-ItemOut ! re enel elena: nes foie CIN UNE
+fields of ItemOut are returned.
+Returns 201 Created instead of the default 200
+Status code status.HTTP 201 CREATED
+
+for a successful POST.
+
+Converts the model to a dict; ** unpacks it into
+
+eK
+model dump() payload.model dump() Itemout(...).
+
+Stops the function and returns an error
+
+Errors raise HTTPException(404) .
+response with a message.
+. . FastAPI calls pagination() first and passes its
+Dependency Depends(pagination) Pas 0 P
+result as p.
+Tags tags-["items"] Groups endpoints into sections in /docs.
+Run:
+» TERMINAL
+
+uvicorn main:app --reload
+
+LEAMI Page 4 of 10
+
+CELILIECALIUnzcnz.icuriuon.iuluo»rriucaciac.iar.iir-zcLcLnm--
+
+--- PAGE 5 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+Docs: http://127.0.0.1:8000/docs
+
+FastAPI Lab 2@ =»
+
+openapi json
+
+health ^
+items ^
+[ ^ gue v
+[= Em v
+{= | fitems/{item_id} Get tem M
+Schemas ^
+HTTPValidationError » object
+Itemin > object
+ItemOut > object
+
+Figure 7 — Swagger Ul of Lab 2: endpoints grouped by tag, and the Pydantic schemas
+
+Checkpoint
+
+In /docs you should see 4 endpoints in two groups (health and items), and at the bottom the schemas
+ItemIn, ItemOut and HTTPValidationError. Open ItemIn: the rules minLength, minimum, maximum are
+documented automatically.
+
+| 2) Try it with curl
+curl sends HTTP requests from the terminal. The options used below:
+E OIX:
+-X POST The HTTP method to use (GET is the default).
+
+H "Content-T :
+ontem ype A header telling the server that the body is JSON.
+
+application/json"
+-d '(...)' The data (request body) to send.
+X (end of line) Continues the command on the next line (macOS / Linux).
+
+LEAMI Page 5 of 10
+
+CELILIECALIUnzcnz.icuriuon.iuluo»rriucaciac.iar.iir-zcLcLnm--
+
+--- PAGE 6 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+Create:
+» TERMINAL - MACOS / LINUX
+
+curl -X POST http://127.0.0.1:8000/items \
+-H "Content-Type: application/json" À
+-d '(
+"name": "Running Shoes",
+"price": 89.9,
+"tags": ["sport","shoes"],
+"rating": 4.5,
+"sizes": [40, 41, 42]
+
+y
+
+d RESPONSE : 201 CREATED
+
+"name" : "Running
+
+Shoes”, "price" Soo, "tags" :["sport", "shoes"],"rating":4.5,"sizes":[40,41,42], "id":1)
+
+Checkpoint
+
+Look at the terminal where Uvicorn runs: you should see [bg] Item created: 1. That is the background
+task running after the response.
+
+Windows users
+
+In PowerShell, curl is an alias for another command and the quotes behave differently. The easiest options
+are:
+
+e Use Swagger UI (/docs > POST /items > Try it out), or
+
+* Use PowerShell's own command:
+
+Invoke-RestMethod Method Post Uri http://127.0.0.1:8000/items `
+-ContentType "application/json" `
+
+-Body '{"name":"Running Shoes" ,"price":89.9,"tags":["sport","shoes"]}"
+
+Read:
+» TERMINAL
+
+curl http://127.0.0.1:8000/items/1
+curl "http://127.0.0.1:8000/items?limit-1&offset-0&tag-shoes"
+
+@ Why?
+The second URL is in quotes because & has a special meaning in the shell (it runs a command in the
+background). Without quotes, only limit=1 would be sent.
+
+Validation error (min length):
+» TERMINAL
+curl -X POST http://127.0.0.1:8000/items \
+
+-H "Content-Type: application/json" \
+-d '("name":"A","price":10)'
+
+LEAMI Page 6 of 10
+
+CELILIECALIUnzcnz.icuriuon.iuluo»rriucaciac.iar.iir-zcLcLnm--
+
+--- PAGE 7 ---
+bts >>
+applied artificial
+
+intelligence B 2Al
+
+DATOP2
+
+You should see a 422 with details:
+«l RESPONSE - 422 UNPROCESSABLE ENTITY
+("detail":[["type":"string too short","loc":["body","name"],
+
+"msg":"String should have at least 2 characters","input":"A",
+"etx": {"min_length":2}}]}
+
+Key What it tells you
+
+loc Where the error is: in the body, field name.
+
+msg A human-readable explanation.
+
+input The value you sent.
+
+type / ctx A machine-readable error type and the rule that failed.
+
+| 3) Return custom errors & statuses
+
+Already covered:
+° 201on create
+* 404 with HTTPException
+
+200 OK Successful GET (/items, /items/1).
+
+201 Created Successful POST: a new item was stored.
+
+404 Not Found GET /items/99: the item does not exist (raised by your code).
+422 Unprocessable Entity The data breaks a validation rule (raised automatically by FastAPI).
+
+Try a negative price to see validation (ge=0):
+» TERMINAL
+curl -X POST http://127.0.0.1:8000/items \
+
+-H "Content-Type: application/json" À
+-d '("name":"Bad","price":-1)'
+
+d Your turn
+
+Predict the status code before running each request, then check:
+e GET /items/99
+
+* A POST with "rating": 6
+
+e A POST with "sizes": [1, 2, 3, 4, 5, 6]
+
+e A POST with "price": "cheap"
+
+e GET /items?limit-0, and why this one fails
+
+LEAMI
+
+Page 7 of 10
+
+CELILIECALIUnzcnz.icuriuon.iuluo»rriucaciac.iar.iir-zcLcLnm--
+
+--- PAGE 8 ---
+bts >>
+applied artificial
+
+intelligence B2AI
+
+DATOP2
+
+© Your turn: DELETE an item
+Add a DELETE endpoint. Complete the TODOs:
+def delete item(item id: int):
+# TODO 1: find the item with this id in DB
+
+# TODO 2: if found, remove it (DB.remove(...)) and return nothing
+# TODO 3: if not found, raise HTTPException(status code-404, ...)
+
+Test it: delete item 1, then GET /items/1 must return 404.
+
+@app.delete("/items/{item_id}", status code=status.HTTP 204 NO CONTENT, tags=["items"])
+
+4) Lightweight tests (pytest + httpx)
+
+Testing by hand with curl is fine once, but slow and easy to forget. Automated tests check your whole API
+
+in one command, every time you change something.
+
+Create test_app.py (in the same folder as main. py):
+
+À TEST_APP.PY
+
+import pytest
+from httpx import AsyncClient, ASGITransport
+from main import app, DB
+
+@pytest. fixture (autouse=True)
+def clear_db():
+DB.clear() # every test starts with an empty "database"
+
+@pytest.mark.asyncio
+async def test_create_and_get_item():
+transport = ASGITransport(app=app)
+
+async with AsyncClient(transport-transport, base url-"http://test") as ac:
+
+# create
+
+payload - (
+"name": "Banana",
+"price": 1.2,
+"tags": ["fruit"],
+
+"rating": 4.0
+}
+r = await ac.post("/items", json=payload)
+assert r.status code == 201
+
+data = r.json()
+assert data["id"] == 1
+assert data["name"] == "Banana"
+
+# get
+
+r2 = await ac.get("/items/1")
+
+assert r2.status_code == 208
+
+assert r2.json()["name"] == "Banana"
+
+@pytest.mark.asyncio
+async def test_validation_error():
+transport = ASGITransport (app=app)
+
+async with AsyncClient(transport-transport, base url-"http://test") as ac:
+
+r = await ac.post("/items", json={"name": "A", "price": 10})
+assert r.status_code == 422
+
+LEAMI
+
+Page 8 of 10
+
+CENOUECCANVAICAIOUCVUNIVIANUVIOENVCALCHUACHUSNOUVNICUCOAID
+
+--- PAGE 9 ---
+bts >>
+applied artificial
+
+intelligence B2AI DATOP2
+
+À Watch out
+
+Older tutorials write AsyncClient(app=app, ...). This argument was removed in httpx 0.28: you now pass
+the app through ASGITransport(app=app), as above.
+
+The clear_db fixture empties the in-memory list before each test. Without it, the order of the tests would
+change the ids, and data["id"] == 1 could fail.
+
+@pytest. fixture (autouse=True) Code that runs automatically before every test.
+@pytest.mark.asyncio Tells pytest (with pytest-asyncio) to run this async test.
+
+Sends requests directly to the app in memory: no server needs
+
+ASGITransport(app=app} to be running
+
+If the condition is false, the test fails and pytest shows the
+
+assert
+values.
+
+Run:
+» TERMINAL
+
+pytest -q
+
+dl EXPECTED OUTPUT
+
+e. [100%]
+2 passed in 0.355
+
+@ Tip
+FastAPI also offers a simpler, synchronous test client. It is good to know both styles:
+
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+def test_root():
+r = client.get("/")
+assert r.status code == 200
+assert r.json() == {"ok": True}
+
+© Your turn
+
+Add these tests to test_app.py and make them pass:
+
+e test get unknown item returns 404: GET /items/99 > 404 and detail == "Item not found"
+
+e test negative price is rejected: POST with price = -1 > 422
+
+e test filter by tag: create 2 items with different tags, then GET /items?tag=fruit returns only one
+
+e test delete item: tests your DELETE endpoint from section 3 (204, then 404)
+
+LEAMI Page 9 of 10
+
+CENOUECCANVAICAIOUCVUNIVIANUVIOENVCALCHUACHUSNOUVNICUCOAID
+
+--- PAGE 10 ---
+bts >>
+applied artificial
+intelligence
+
+B2Al DATOP2
+
+Deliverables & assessment
+
+Hand in a zip file of your project folder (without the venv folder) containing:
+
+main. py with all endpoints, including DELETE.
+
+test_app.py with at least 6 tests, all passing.
+requirements.txt (pip freeze > requirements.txt).
+
+A screenshot of /docs and a screenshot of the pytest output.
+
+A short reflection (5-8 lines): what is the difference between a 404 and a 422 error, and who raises
+each one?
+
+m
+Lab 1: app runs, both endpoints and /docs work, challenges 1-4 4
+Lab 2: POST / GET / list endpoints work with correct status codes 5
+Validation: rules demonstrated (422 cases explained) 3
+DELETE endpoint implemented and tested 3
+Tests: at least 6 tests, all passing 3
+Code quality & reflection 2
+Total 20
+LEAMI Page 10 of 10
+
+CENOUECCANVAICAIOUCVUNIVIANUVIOENVCALCHUACHUSNOUVNICUCOAID
+
+
+
+--- PDF METADATA ---
+
+InfoBegin
+InfoKey: Creator
+InfoValue: Microsoft® Word for Microsoft 365
+InfoBegin
+InfoKey: Producer
+InfoValue: Microsoft® Word for Microsoft 365
+InfoBegin
+InfoKey: Author
+InfoValue: Micael Leal
+InfoBegin
+InfoKey: ModDate
+InfoValue: D:20260929140205+02'00'
+InfoBegin
+InfoKey: CreationDate
+InfoValue: D:20260929140205+02'00'
+PdfID0: 53400ca97a0a7a448132c1de2fa9cddf
+PdfID1: 53400ca97a0a7a448132c1de2fa9cddf
+NumberOfPages: 10
+BookmarkBegin
+BookmarkTitle: Lab 2: FastAPI with POST, Validation & Testing
+BookmarkLevel: 1
+BookmarkPageNumber: 1
+BookmarkBegin
+BookmarkTitle: 1) Create models and endpoints
+BookmarkLevel: 2
+BookmarkPageNumber: 2
+BookmarkBegin
+BookmarkTitle: 2) Try it with curl
+BookmarkLevel: 2
+BookmarkPageNumber: 5
+BookmarkBegin
+BookmarkTitle: 3) Return custom errors & statuses
+BookmarkLevel: 2
+BookmarkPageNumber: 7
+BookmarkBegin
+BookmarkTitle: 4) Lightweight tests (pytest + httpx)
+BookmarkLevel: 2
+BookmarkPageNumber: 8
+BookmarkBegin
+BookmarkTitle: Deliverables & assessment
+BookmarkLevel: 3
+BookmarkPageNumber: 10
+PageMediaBegin
+PageMediaNumber: 1
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 2
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 3
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 4
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 5
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 6
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 7
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 8
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 9
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+PageMediaBegin
+PageMediaNumber: 10
+PageMediaRotation: 0
+PageMediaRect: 0 0 612 792
+PageMediaDimensions: 612 792
+
+
+--- PDF FORM FIELDS ---
+

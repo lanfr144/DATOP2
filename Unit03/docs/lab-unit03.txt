@@ -1,0 +1,538 @@
+Unit 03 — Lab: Monolith vs Microservices · Build the Book&Ride Monolith
+⏱  DURATION
+2 hours (1 session)	👥  TEAM SIZE
+2–3 students	🧰  PREREQUISITES
+FastAPI labs (Unit 02), Docker Desktop installed	📦  YOU WILL PRODUCE
+A running monolith (books + rentals) + ADR-001
+
+0) Where this lab fits
+Units 03 and 04 form one project in two steps. Today you build the monolith. Next week you will put an API gateway in front of it and extract one module into a microservice, so you will experience both architectures on the same application.
+Unit	Theory (≈ 25 min)	Hands-on (≈ 95 min)	Result
+03 · today	Monolith vs microservices	Build Book&Ride as a monolith with Docker Compose	API on :8080, one database
+04 · next week	API gateway	NGINX gateway, API keys, rate limit, extract rentals into a microservice	Gateway on :8000, two services
+
+ 
+Figure 1 – What you will have running at the end of this lab
+
+ 1) Scenario & requirements
+You are building the API of Book&Ride, a bike rental service next to a bookstore café.
+•	📚 Books: list, search, create, update and delete books (title, author, stock).
+•	🚲 Rentals: start and stop a bike rental; price = €0.25 per started minute, capped at €12.
+•	👤 Users: no login today. The user id is sent in an X-User-Id header (default 1). Real authentication moves to the gateway in Unit 04.
+At the end of this lab, you will be able to:
+•	Explain the trade-offs between a monolith and microservices and justify a choice in an ADR.
+•	Run an API and a PostgreSQL database together with Docker Compose.
+•	Structure a monolith into modules (routers) that share one codebase and one database.
+•	Implement business logic (pricing) and protect it with unit tests.
+2) Timeline
+Time	Step	Focus
+0:00 – 0:25	Theory (slides)	Monolith, modular monolith, microservices, when to choose which
+0:25 – 0:35	Checkpoint 1 · Decide	Write ADR-001: why a monolith?
+0:35 – 1:00	Checkpoint 2 · Setup	Docker Compose: PostgreSQL + API, /health
+1:00 – 1:30	Checkpoint 3 · Books module	Books CRUD + search with SQLAlchemy
+1:30 – 1:55	Checkpoint 4 · Rentals module	Start/stop, pricing, unit tests
+1:55 – 2:00	Wrap-up	Reflection questions, hand-in
+
+Checkpoint 1 — Decide: monolith or microservices? (10 min)
+Before writing code, architects record important decisions in an ADR (Architecture Decision Record): a short text file that explains what was decided and why. Use this table to decide for Book&Ride:
+Question	Points to a monolith if…	Points to microservices if…
+Team size?	One small team (2–5 people)	Several teams, each owning a part
+Expected traffic?	Low, similar for all features	Very different per feature (e.g. rentals ×100)
+Change frequency?	Everything changes together	Parts change and ship at different speeds
+Data?	Shared data, strong consistency needed	Data can be split; eventual consistency is OK
+Time to market?	Need a working product fast	Long-term platform, budget for DevOps
+
+Create the file docs/adr/ADR-001-architecture.md and complete it (5–10 lines are enough):
+{ } DOCS/ADR/ADR-001-ARCHITECTURE.MD
+# ADR-001: Architecture style for Book&Ride
+ 
+## Status
+Accepted - <date>
+ 
+## Context
+<team size, expected traffic, how often features change, data shared or not>
+ 
+## Decision
+We build Book&Ride as a <monolith / microservices> because ...
+ 
+## Consequences
++ <what becomes easier>
+- <what becomes harder / what we accept>
+- We will reconsider this decision when ...
+
+Checkpoint 2 — Project setup with Docker Compose (25 min)
+Create this folder structure (empty files are fine for now, you will fill them step by step):
+⏎ PROJECT STRUCTURE
+bookandride/
+├── docker-compose.yml
+├── .env.example            ← copied to .env (never commit .env!)
+├── docs/adr/ADR-001-architecture.md
+└── api/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── pytest.ini
+    ├── app/
+    │   ├── __init__.py     ← empty: makes "app" a Python package
+    │   ├── main.py         ← creates the FastAPI app
+    │   ├── db.py           ← database connection
+    │   ├── models.py       ← tables (SQLAlchemy)
+    │   ├── schemas.py      ← request/response shapes (Pydantic)
+    │   ├── pricing.py      ← business rule: price of a rental
+    │   └── routers/
+    │       ├── __init__.py
+    │       ├── books.py    ← module 1
+    │       └── rentals.py  ← module 2
+    └── tests/
+        └── test_pricing.py
+
+1. The two containers. db runs PostgreSQL, api is built from your api/ folder:
+flange  DOCKER-COMPOSE.YML
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev123}
+      POSTGRES_DB: ${DB_NAME:-bookandride}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app} -d ${DB_NAME:-bookandride}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+ 
+  api:
+    build: ./api
+    env_file: .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+ 
+volumes:
+  dbdata:
+flange
+
+
+ Line	Why
+image: postgres:16-alpine	Official PostgreSQL image, small "alpine" variant.
+volumes: dbdata:…	Data is stored in a named volume, so it survives docker compose down.
+healthcheck: pg_isready	Docker knows when PostgreSQL is really ready to accept connections.
+depends_on … service_healthy	The API only starts after the database is healthy.
+ports: "8080:8080"	Publishes the API on your machine: http://localhost:8080. The database port is not published.
+
+2. Configuration. Create .env.example, then copy it to .env:
+flange  .ENV.EXAMPLE
+DB_USER=app
+DB_PASSWORD=dev123
+DB_NAME=bookandride
+DATABASE_URL=postgresql+psycopg://app:dev123@db:5432/bookandride
+APP_VERSION=0.1.0
+flange
+🧠 Why?
+Inside the Compose network, containers reach each other by service name: the API connects to the host db, not to localhost. localhost inside a container means the container itself.
+
+3. The API image:
+flange  API/DOCKERFILE
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+flange
+flange  API/REQUIREMENTS.TXT
+fastapi>=0.112
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+psycopg[binary]>=3.2
+pytest>=8.0
+httpx>=0.27
+flange
+flange  API/PYTEST.INI
+[pytest]
+pythonpath = .
+flange
+4. Database connection (shared by every module):
+flange  API/APP/DB.PY
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+ 
+# PostgreSQL in Docker, SQLite file as a fallback for quick local tests
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
+ 
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
+SessionLocal = sessionmaker(bind=engine, autoflush=False)
+ 
+ 
+class Base(DeclarativeBase):
+    pass
+ 
+ 
+def get_db():
+    """FastAPI dependency: one database session per request."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+flange
+5. A first main.py with a health check only:
+flange  API/APP/MAIN.PY (VERSION 1)
+import os
+from contextlib import asynccontextmanager
+ 
+from fastapi import FastAPI, HTTPException
+from sqlalchemy import text
+ 
+from .db import Base, engine
+from . import models   # noqa: F401  (registers the tables)
+ 
+APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
+ 
+ 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)     # create the tables if they don't exist
+    yield
+ 
+ 
+app = FastAPI(title="Book&Ride API (monolith)", version=APP_VERSION, lifespan=lifespan)
+ 
+ 
+@app.get("/health", tags=["health"])
+def health():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"status": "ok", "version": APP_VERSION}
+flange
+Create api/app/models.py with just the imports for now (you add the tables in Checkpoints 3 and 4):
+flange  API/APP/MODELS.PY (VERSION 1)
+from datetime import datetime
+from sqlalchemy import String, DateTime
+from sqlalchemy.orm import Mapped, mapped_column
+from .db import Base
+flange
+6. Start everything:
+flange  TERMINAL1
+cp .env.example .env
+docker compose up -d --build
+docker compose ps                  # both services "running", db "healthy"
+curl http://localhost:8080/health
+flange
+⏎ EXPECTED OUTPUT
+{"status":"ok","version":"0.1.0"}
+
+Problem	Fix
+curl: (7) Failed to connect	The API is still starting or crashed: docker compose logs api
+password authentication failed	The DB was first created with another password. Reset it: docker compose down -v (deletes the data)
+ModuleNotFoundError: app	Check the files app/__init__.py and the CMD in the Dockerfile (app.main:app)
+Port 8080 already in use	Stop the other program, or publish another port: "8081:8080"
+
+✅ Checkpoint
+docker compose ps shows 2 containers, and /health answers "status":"ok". Open http://localhost:8080/docs: the Swagger UI already shows the /health endpoint.
+
+
+ Checkpoint 3 — The books module (30 min)
+1. Add the table to models.py:
+flange  API/APP/MODELS.PY (ADD)
+class Book(Base):
+    __tablename__ = "books"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    author: Mapped[str] = mapped_column(String(120))
+    stock: Mapped[int] = mapped_column(default=0)
+flange
+2. Describe the JSON that goes in and out (Pydantic schemas):
+flange  API/APP/SCHEMAS.PY
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
+ 
+ 
+class BookIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    author: str = Field(min_length=1, max_length=120)
+    stock: int = Field(default=0, ge=0)
+ 
+ 
+class BookUpdate(BaseModel):          # every field optional: send only what changes
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    author: str | None = Field(default=None, min_length=1, max_length=120)
+    stock: int | None = Field(default=None, ge=0)
+ 
+ 
+class BookOut(BookIn):
+    model_config = ConfigDict(from_attributes=True)   # read from SQLAlchemy objects
+    id: int
+flange
+Schema	Used for
+BookIn	The body of POST /books (all fields validated).
+BookUpdate	The body of PUT /books/{id}: every field optional, send only what changes.
+BookOut	What the API returns (adds the id; from_attributes reads SQLAlchemy objects).
+
+3. Write the router. The first three endpoints are given:
+flange  API/APP/ROUTERS/BOOKS.PY
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
+ 
+from ..db import get_db
+from ..models import Book
+from ..schemas import BookIn, BookOut, BookUpdate
+ 
+router = APIRouter(prefix="/books", tags=["books"])
+ 
+ 
+@router.get("", response_model=list[BookOut])
+def list_books(search: str | None = None, db: Session = Depends(get_db)):
+    query = select(Book).order_by(Book.id)
+    if search:
+        pattern = f"%{search}%"
+        query = query.where(or_(Book.title.ilike(pattern), Book.author.ilike(pattern)))
+    return db.scalars(query).all()
+ 
+ 
+@router.get("/{book_id}", response_model=BookOut)
+def get_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return book
+ 
+ 
+@router.post("", response_model=BookOut, status_code=status.HTTP_201_CREATED)
+def create_book(payload: BookIn, db: Session = Depends(get_db)):
+    book = Book(**payload.model_dump())
+    db.add(book)
+    db.commit()
+    db.refresh(book)          # reload to get the id generated by the database
+    return book
+ 
+ 
+ 
+@router.put("/{book_id}", response_model=BookOut)
+def update_book(book_id: int, payload: BookUpdate, db: Session = Depends(get_db)):
+    # TODO 1: load the book with db.get(Book, book_id) -> 404 if None
+    # TODO 2: for each field sent by the client
+    #         (payload.model_dump(exclude_unset=True).items()), setattr(book, field, value)
+    # TODO 3: db.commit(), db.refresh(book), return book
+    ...
+ 
+ 
+@router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_book(book_id: int, db: Session = Depends(get_db)):
+    # TODO: 404 if the book does not exist, otherwise db.delete(book) + db.commit()
+    #       and return Response(status_code=status.HTTP_204_NO_CONTENT)
+    ...
+flange
+4. Plug the module into the app. In main.py, add:
+flange  API/APP/MAIN.PY (ADD)
+from .routers import books          # at the top, with the other imports
+...
+app.include_router(books.router)    # at the end of the file
+flange
+Rebuild and test (--build is needed because the code is copied into the image):
+flange  TERMINAL2
+docker compose up -d --build
+ 
+curl -s -X POST http://localhost:8080/books -H "Content-Type: application/json" \
+  -d '{"title": "Dune", "author": "Frank Herbert", "stock": 5}'
+curl -s -X POST http://localhost:8080/books -H "Content-Type: application/json" \
+  -d '{"title": "1984", "author": "George Orwell", "stock": 3}'
+curl -s "http://localhost:8080/books?search=orwell"
+curl -s -X PUT http://localhost:8080/books/1 -H "Content-Type: application/json" -d '{"stock": 10}'
+curl -s -i -X DELETE http://localhost:8080/books/2
+flange
+Request	Expected result
+POST /books (Dune)	201 · {"title":"Dune","author":"Frank Herbert","stock":5,"id":1}
+GET /books?search=orwell	200 · [{"title":"1984","author":"George Orwell","stock":3,"id":2}]
+PUT /books/1 {"stock": 10}	200 · {…"stock":10,"id":1}
+DELETE /books/2	204 No Content (and GET /books/2 → 404)
+POST {"title":"","stock":-1}	422 · two validation errors (title too short, stock < 0)
+
+💡 Tip
+Windows PowerShell: use curl.exe instead of curl, or test everything in Swagger UI (http://localhost:8080/docs → Try it out).
+Want to see the data in the database? docker compose exec db psql -U app -d bookandride -c "SELECT * FROM books;"
+
+
+ Checkpoint 4 — The rentals module (25 min)
+1. The business rule first, in its own file so it can be tested without a database:
+flange  API/APP/PRICING.PY
+PRICE_PER_MINUTE = 0.25   # €
+DAILY_CAP = 12.0          # €
+ 
+ 
+def calculate_price(minutes: int) -> float:
+    """€0.25 per started minute, never more than €12."""
+    if minutes < 0:
+        raise ValueError("minutes must be >= 0")
+    base = minutes * PRICE_PER_MINUTE
+    return round(min(base, DAILY_CAP), 2)
+flange
+2. Unit tests. One test is given, write the other two:
+flange  API/TESTS/TEST_PRICING.PY
+import pytest
+from app.pricing import calculate_price
+ 
+ 
+def test_price_under_cap():
+    assert calculate_price(40) == 10.0      # 40 × 0.25 = 10.00
+ 
+ 
+def test_price_at_cap():
+    # TODO: from how many minutes is the price exactly €12?
+    ...
+ 
+ 
+def test_price_over_cap():
+    # TODO: a very long rental must never cost more than €12
+    ...
+
+flange
+flange  TERMINAL3
+docker compose up -d --build
+docker compose exec api pytest -q
+flange
+⏎ EXPECTED OUTPUT
+...                                                        [100%]
+3 passed in 0.02s
+
+3. The table and the schemas. Add to models.py and schemas.py:
+flange  API/APP/MODELS.PY (ADD)
+class Rental(Base):
+    __tablename__ = "rentals"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int]
+    bike_id: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    total_minutes: Mapped[int | None]
+    price_eur: Mapped[float | None]
+flange
+flange  API/APP/SCHEMAS.PY (ADD)
+class RentalStart(BaseModel):
+    bike_id: str = Field(pattern=r"^BIKE-\d{2,}$")    # e.g. BIKE-01
+ 
+ 
+class RentalStop(BaseModel):
+    rental_id: int
+flange
+4. The router (given: read it and make sure you understand each line):
+flange  API/APP/ROUTERS/RENTALS.PY
+import math
+from datetime import datetime, timezone
+ 
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+ 
+from ..db import get_db
+from ..models import Rental
+from ..pricing import calculate_price
+from ..schemas import RentalStart, RentalStop
+ 
+router = APIRouter(prefix="/rentals", tags=["rentals"])
+ 
+ 
+@router.post("/start", status_code=status.HTTP_201_CREATED)
+def start_rental(payload: RentalStart, db: Session = Depends(get_db),
+                 x_user_id: int = Header(default=1)):
+    # a bike cannot be rented twice at the same time
+    busy = db.scalar(select(Rental).where(Rental.bike_id == payload.bike_id,
+                                          Rental.stopped_at.is_(None)))
+    if busy:
+        raise HTTPException(status_code=409, detail=f"{payload.bike_id} is already rented")
+    rental = Rental(user_id=x_user_id, bike_id=payload.bike_id,
+                    started_at=datetime.now(timezone.utc))
+    db.add(rental)
+    db.commit()
+    db.refresh(rental)
+    return {"rental_id": rental.id, "bike_id": rental.bike_id,
+            "started_at": rental.started_at.isoformat()}
+ 
+ 
+@router.post("/stop")
+def stop_rental(payload: RentalStop, db: Session = Depends(get_db)):
+    rental = db.get(Rental, payload.rental_id)
+    if rental is None:
+        raise HTTPException(status_code=404, detail="Rental not found")
+    if rental.stopped_at is not None:
+        raise HTTPException(status_code=409, detail="Rental already stopped")
+    now = datetime.now(timezone.utc)
+    started = rental.started_at
+    if started.tzinfo is None:                 # SQLite drops the timezone
+        started = started.replace(tzinfo=timezone.utc)
+    # every started minute counts
+    minutes = max(1, math.ceil((now - started).total_seconds() / 60))
+    rental.stopped_at = now
+    rental.total_minutes = minutes
+    rental.price_eur = calculate_price(minutes)
+    db.commit()
+    return {"rental_id": rental.id, "duration_min": minutes, "price_eur": rental.price_eur}
+ 
+ 
+@router.get("")
+def list_rentals(db: Session = Depends(get_db)):
+    rentals = db.scalars(select(Rental).order_by(Rental.id)).all()
+    return [{"rental_id": r.id, "user_id": r.user_id, "bike_id": r.bike_id,
+             "started_at": r.started_at, "stopped_at": r.stopped_at,
+             "price_eur": r.price_eur} for r in rentals]
+
+flange
+Rule in the code	Why
+409 if the bike is already rented	A bike cannot be in two rentals at the same time.
+math.ceil(seconds / 60), at least 1	Every started minute is paid: 61 seconds = 2 minutes.
+datetime.now(timezone.utc)	Always store times in UTC; convert only for display.
+X-User-Id header (default 1)	Temporary: in Unit 04 the gateway will set this header after checking an API key.
+
+5. Plug it in (main.py): from .routers import books, rentals and app.include_router(rentals.router). Rebuild and test:
+flange  TERMINAL4
+curl -s -X POST http://localhost:8080/rentals/start -H "Content-Type: application/json" \
+  -d '{"bike_id": "BIKE-01"}'
+curl -s -X POST http://localhost:8080/rentals/start -H "Content-Type: application/json" \
+  -d '{"bike_id": "BIKE-01"}'                      # same bike again
+curl -s -X POST http://localhost:8080/rentals/stop -H "Content-Type: application/json" \
+  -d '{"rental_id": 1}'
+curl -s http://localhost:8080/rentals
+flange
+
+⏎ EXPECTED OUTPUT
+{"rental_id":1,"bike_id":"BIKE-01","started_at":"2026-10-08T10:00:00.123+00:00"}
+{"detail":"BIKE-01 is already rented"}                                  ← 409
+{"rental_id":1,"duration_min":1,"price_eur":0.25}
+
+✅ Checkpoint
+Your monolith now serves /health, /books… and /rentals… from one container, using one database with two tables. Check it: docker compose exec db psql -U app -d bookandride -c "\dt"
+
+
+ Wrap-up — what makes this a monolith? (5 min)
+Observation	In your project
+One codebase	Everything is in api/.
+One deployment unit	docker compose up --build api rebuilds books and rentals.
+One database	Tables books and rentals live side by side in bookandride.
+Modules talk in-process	A router could call another module's function directly: fast, no network.
+Shared fate	If the api container crashes, books and rentals are down.
+
+❓ Check your understanding
+•  Why is a monolith a good choice for Book&Ride today?
+•  Give two signals that would make you switch to microservices.
+•  What happens to the API if PostgreSQL crashes? How does /health show it?
+•  Our code is a modular monolith. Why will this make Unit 04 easier?
+
+Hand-in (end of the session)
+•	Your bookandride/ folder (zip, without .env) with the monolith running.
+•	docs/adr/ADR-001-architecture.md completed.
+•	Answers to the 4 questions above (a few lines each).
+🚀 Stretch goals (if you finish early)
+•  Search by author only: GET /books?author=Orwell.
+•  Rental history of the current user: GET /rentals/me (filter on X-User-Id).
+•  Make the €12 cap apply per day for rentals longer than 24 h, and test it.
+•  Run the container as a non-root user (RUN useradd -m app + USER app in the Dockerfile).

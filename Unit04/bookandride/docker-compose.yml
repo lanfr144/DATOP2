@@ -1,0 +1,113 @@
+# Book&Ride - Unit 04: API gateway + 2 services, each with its own database.
+# Every port, password and API key comes from .env  (cp .env.example .env)
+#
+#   client --:${GATEWAY_PORT}--> gateway (NGINX) --/books-----> api     --> db
+#                                                 --/rentals---> rentals --> rentals-db
+services:
+  gateway:
+    image: nginx:1.27-alpine
+    environment:
+      # read by the nginx image to fill gateway/templates/default.conf.template
+      GATEWAY_LISTEN_PORT: ${GATEWAY_LISTEN_PORT}
+      API_PORT: ${API_PORT}
+      RENTALS_PORT: ${RENTALS_PORT}
+      RATE_LIMIT: ${RATE_LIMIT}
+      RATE_BURST: ${RATE_BURST}
+      API_KEY_USER1: ${API_KEY_USER1}
+      API_KEY_USER2: ${API_KEY_USER2}
+    volumes:
+      - ./gateway/templates:/etc/nginx/templates:ro
+    ports:
+      - "${GATEWAY_PORT}:${GATEWAY_LISTEN_PORT}"   # the ONLY port published to the outside world
+    depends_on:
+      api:
+        condition: service_healthy
+      rentals:
+        condition: service_healthy
+    healthcheck:               # the gateway's own /health (busybox wget is in nginx:alpine)
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${GATEWAY_LISTEN_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:                         # the former monolith - now only books
+    build: ./api
+    environment:
+      API_PORT: ${API_PORT}
+      APP_VERSION: ${APP_VERSION}
+      DATABASE_URL: postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+    # no "ports:" anymore: the API is only reachable through the gateway
+    depends_on:
+      db:
+        condition: service_healthy
+    # healthcheck: HEALTHCHECK in api/Dockerfile (GET /health)
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      PGPORT: ${DB_PORT}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rentals:                     # NEW microservice
+    build: ./rentals-service
+    environment:
+      API_PORT: ${RENTALS_PORT}            # port uvicorn listens on (see rentals-service/Dockerfile)
+      APP_VERSION: ${RENTALS_VERSION}
+      DATABASE_URL: postgresql+psycopg://${RENTALS_DB_USER}:${RENTALS_DB_PASSWORD}@${RENTALS_DB_HOST}:${RENTALS_DB_PORT}/${RENTALS_DB_NAME}
+    # no "ports:": clients must go through the gateway (it sets X-User-Id)
+    depends_on:
+      rentals-db:
+        condition: service_healthy
+    # healthcheck: HEALTHCHECK in rentals-service/Dockerfile (GET /rentals/health)
+
+  rentals-db:                  # its OWN database (database per service)
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${RENTALS_DB_USER}
+      POSTGRES_PASSWORD: ${RENTALS_DB_PASSWORD}
+      POSTGRES_DB: ${RENTALS_DB_NAME}
+      PGPORT: ${RENTALS_DB_PORT}
+    volumes:
+      - rentalsdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RENTALS_DB_USER} -d ${RENTALS_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  prometheus:                  # optional (Checkpoint 4): docker compose --profile monitoring up -d
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    environment:
+      RENTALS_PORT: ${RENTALS_PORT}
+      PROMETHEUS_PORT: ${PROMETHEUS_PORT}
+    volumes:
+      - ./prometheus/prometheus.yml.template:/etc/prometheus/prometheus.yml.template:ro
+    # fill the target with the port from .env, then start Prometheus
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - sed "s/RENTALS_TARGET/rentals:$${RENTALS_PORT}/" /etc/prometheus/prometheus.yml.template > /tmp/prometheus.yml
+        && exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus --web.listen-address=:$${PROMETHEUS_PORT}
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT}:${PROMETHEUS_PORT}"
+    depends_on:
+      rentals:
+        condition: service_healthy
+    healthcheck:               # Prometheus' built-in health endpoint
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${PROMETHEUS_PORT}/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  dbdata:
+  rentalsdata:

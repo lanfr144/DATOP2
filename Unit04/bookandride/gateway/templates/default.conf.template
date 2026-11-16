@@ -1,0 +1,82 @@
+# =====================================================================
+# Book&Ride API gateway (NGINX) - Unit 04, final version (Checkpoint 3)
+#
+# This is a TEMPLATE: at start-up the official nginx image replaces the
+# ${VARIABLES} with the values from .env (envsubst) and writes the result
+# to /etc/nginx/conf.d/default.conf. Only variables defined in the
+# environment are replaced, so NGINX's own $variables are left untouched.
+# (gateway/nginx.conf.reference = the same file with the lab's fixed values)
+# =====================================================================
+
+# ---------- rate limiting: ${RATE_LIMIT} per client IP ----------
+limit_req_zone $binary_remote_addr zone=perip:10m rate=${RATE_LIMIT};
+
+# ---------- API key -> user id ("" = unknown key) ----------
+map $http_x_api_key $api_user {
+    default              "";
+    "${API_KEY_USER1}"   "1";
+    "${API_KEY_USER2}"   "2";
+}
+
+# ---------- upstream services (= Docker Compose service names) ----------
+upstream books_service   { server api:${API_PORT}; }
+upstream rentals_service { server rentals:${RENTALS_PORT}; }
+
+server {
+    listen ${GATEWAY_LISTEN_PORT};
+    default_type application/json;
+
+    # accept short bursts, then answer 429 Too Many Requests
+    limit_req zone=perip burst=${RATE_BURST} nodelay;
+    limit_req_status 429;
+
+    # errors produced by the gateway itself: JSON body (default_type) instead of NGINX's HTML page
+    error_page 429 = @too_many_requests;
+    error_page 502 = @bad_gateway;
+    error_page 504 = @gateway_timeout;
+    location @too_many_requests {
+        add_header Retry-After 1 always;    # cheat sheet 04bis: "429 -> wait (Retry-After) and retry"
+        return 429 '{"detail":"Too many requests, retry later"}';
+    }
+    location @bad_gateway {
+        return 502 '{"detail":"Upstream service unavailable"}';
+    }
+    location @gateway_timeout {
+        return 504 '{"detail":"Upstream service timeout"}';
+    }
+
+    # the gateway's own health check
+    location = /health {
+        return 200 '{"status":"ok","component":"gateway"}';
+    }
+
+    # health checks of the services: public, no API key (useful for monitoring)
+    location = /books/health   { proxy_pass http://books_service/health; }
+    location = /rentals/health { proxy_pass http://rentals_service/rentals/health; }
+
+    # public route: books (no API key needed)
+    # NB: a location with one proxy_set_header no longer inherits the others -> repeated
+    location /books {
+        proxy_pass http://books_service;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # protected route: rentals (the API key is checked HERE, not in the service)
+    location /rentals {
+        if ($api_user = "") {
+            return 401 '{"detail":"Missing or invalid API key"}';
+        }
+        proxy_pass http://rentals_service;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-User-Id $api_user;    # overwrites any value sent by the client
+    }
+
+    # everything else is rejected at the gateway (smaller attack surface)
+    location / {
+        return 404 '{"detail":"Unknown route"}';
+    }
+}

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>API Docs</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen bg-slate-50">
+    <header class="border-b border-slate-200 bg-white">
+      <div class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 class="text-lg font-semibold text-slate-900">API Docs</h1>
+          <p class="text-sm text-slate-500">Browse the OpenAPI spec and try endpoints directly.</p>
+        </div>
+        <nav class="flex flex-wrap items-center gap-2">
+          <a
+            href="/dashboard"
+            class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >Dashboard</a
+          >
+          <a
+            href="/docs"
+            class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >API docs</a
+          >
+          <a
+            href="/redoc"
+            class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >Redoc</a
+          >
+          <a
+            href="/logout"
+class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >Log out</a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-5xl px-4 py-10">
+      <section class="rounded-2xl bg-white p-8 shadow">
+        <h2 class="text-xl font-semibold text-slate-900">Swagger UI</h2>
+        <p class="mt-2 text-sm text-slate-600">
+          This page wraps the built-in Swagger UI in an app shell.
+        </p>
+
+        <div class="mt-6 h-[80vh] rounded-lg border border-slate-200">
+          <iframe
+            src="/swagger"
+            class="h-full w-full rounded-lg"
+            frameborder="0"
+            title="Swagger UI"
+          ></iframe>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

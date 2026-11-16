@@ -1,0 +1,41 @@
+# GESTEL API + MySQL 8. Toutes les valeurs (ports, mots de passe) viennent du fichier .env.
+#   cp .env.example .env   (puis remplacer les PASSWORD_*)
+#   docker compose up -d --build
+services:
+  mysql:
+    image: mysql:8.4
+    command: ["--port=${MYSQL_PORT}"]          # port interne, lu dans .env
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_PORT: ${MYSQL_PORT}                # utilise par le healthcheck
+    ports:
+      # publie sur 127.0.0.1 uniquement : la base n'est pas exposee au reseau
+      - "127.0.0.1:${MYSQL_HOST_PORT}:${MYSQL_PORT}"
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      # $$ = "$" litteral : la variable est evaluee DANS le conteneur
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -P $${MYSQL_PORT:-3306} -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./api
+    env_file: .env
+    environment:
+      # Dans le reseau Docker, MySQL s'appelle "mysql" et ecoute sur son port interne
+      APP_HOST: 0.0.0.0
+      MYSQL_HOST: mysql
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:${MYSQL_PORT}/${MYSQL_DATABASE}
+    ports:
+      - "${APP_HOST_PORT}:${APP_PORT}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysqldata:
